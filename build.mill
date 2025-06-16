@@ -1,0 +1,99 @@
+package build
+
+import $ivy.`de.tototec::de.tobiasroeser.mill.vcs.version::0.4.1`
+import $ivy.`com.goyeau::mill-scalafix::0.4.0`
+import $ivy.`com.github.lolgab::mill-mima::0.0.24`
+import $ivy.`com.lihaoyi::mill-contrib-bloop:`
+
+import mill.{scalalib, scalajslib, scalanativelib, Module}
+import mill.{Agg}
+import mill.define.{Cross, Task}
+import mill.contrib.bloop.Bloop
+import scalalib.DepSyntax // for `ivy` string interpolator
+import scalalib.{CrossScalaModule,ScalaModule, TestModule, PublishModule, PlatformScalaModule}
+import scalalib.publish.{Developer, PomSettings, VersionControl}
+import scalalib.publish.License.Common.Apache2
+import scalalib.scalafmt.ScalafmtModule
+import scalajslib.ScalaJSModule
+import scalanativelib.ScalaNativeModule
+import scalanativelib.api.{LTO, ReleaseMode}
+
+import de.tobiasroeser.mill.vcs.version.VcsVersion
+import com.goyeau.mill.scalafix.{ScalafixModule => FixModule}
+
+def format = ScalafmtModule
+def bloop = Bloop
+
+val scalaNextVersion = sys.props.get("scalaNextVersion")
+val scalaVersions = Seq("3.3.3") ++ scalaNextVersion
+
+trait ArtifactPublishModule extends PublishModule {
+  def pomSettings = PomSettings(
+    description = "The missing predef for Scala and for future",
+    organization = "io.lqhuang",
+    url = "https://github.com/lqhuang/redef",
+    licenses = Seq(Apache2),
+    versionControl = VersionControl.github("lqhuang", "redef"),
+    developers = Seq(
+      Developer("lqhuang", "Lanqing Huang", "https://github.com/lqhuang"),
+    ),
+  )
+
+  def publishVersion = VcsVersion.vcsState().format()
+}
+
+
+  // def scalafixIvyDeps = Agg(
+  //   ivy"com.github.lolgab::mill-scalafix:0.4.0",
+  //   ivy"ch.epfl.scala::sbt-scalafix:2.5.1",
+  // )
+
+
+trait RedefModule extends CrossScalaModule
+    with ArtifactPublishModule
+    with PlatformScalaModule {
+  def scalacPluginIvyDeps = Agg(ivy"com.lihaoyi:::acyclic:0.3.18")
+
+  def scalacOptions = Seq(
+    "-source:future",
+    "-language:experimental.modularity",
+    "-P:acyclic:force",
+  )
+}
+
+object redef extends Module {
+  object jvm extends Cross[RedefModule](scalaVersions) {}
+  trait JvmModule extends RedefModule with ScalaModule {
+    object test extends ScalaTests with TestModule.Munit {
+      def ivyDeps = Agg(ivy"org.scalameta::munit:1.0.4")
+    }
+  }
+
+  object js extends Cross[RedefModule](scalaVersions) {  }
+  trait JsModule extends RedefModule with ScalaJSModule {
+    object test extends ScalaJSTests with TestModule.Munit {
+      def ivyDeps = Agg(
+        ivy"org.scalameta::munit::1.0.4",
+      )
+    }
+  }
+
+  object native extends Cross[RedefModule](scalaVersions) {}
+  trait NativeModule extends RedefModule with ScalaNativeModule {
+  def scalaNativeVersion = "0.5.7"
+
+  def scalacOptions = super.scalacOptions() ++ Seq(
+    "-P:scalanative:genStaticForwardersForNonTopLevelObjects"
+  )
+
+  // def releaseMode = ReleaseMode.ReleaseFast
+  def releaseMode = ReleaseMode.Debug
+
+  def nativeLTO = LTO.Thin
+
+  def nativeIncrementalCompilation = true
+  object test extends ScalaNativeTests with TestModule.Munit {
+      def ivyDeps = Agg(ivy"org.scalameta::munit::1.0.4")
+    }
+  }
+}
