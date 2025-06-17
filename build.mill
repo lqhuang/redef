@@ -25,7 +25,7 @@ def format = ScalafmtModule
 def bloop = Bloop
 
 val scalaNextVersion = sys.props.get("scalaNextVersion")
-val scalaVersions = Seq("3.3.3") ++ scalaNextVersion
+val scalaVersions = Seq("3.3.6") ++ scalaNextVersion
 
 trait ArtifactPublishModule extends PublishModule {
   def pomSettings = PomSettings(
@@ -52,7 +52,7 @@ trait ArtifactPublishModule extends PublishModule {
 trait RedefModule extends CrossScalaModule
     with ArtifactPublishModule
     with PlatformScalaModule {
-  def scalacPluginIvyDeps = Agg(ivy"com.lihaoyi:::acyclic:0.3.18")
+  // def scalacPluginIvyDeps = Agg(ivy"com.lihaoyi:::acyclic:0.3.18")
 
   def scalacOptions = Seq(
     "-source:future",
