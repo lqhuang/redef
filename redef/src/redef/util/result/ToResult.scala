@@ -1,4 +1,4 @@
-package redef.result
+package redef.util
 
 /**
  * Used to convert a value of type `V` to a `Result[T, E]`
@@ -21,13 +21,13 @@ object ToResult {
    * >>> Result(Right(1)) == Ok(1)
    * true
    *
-   * >>> Result(Left("Error")) == Err("Error")
+   * >>> Result(Left("Error")) == Failue("Error")
    * true
    * }}}
    */
   implicit def eitherToResult[T, E]: ToResult[T, E, Either[E, T]] = {
     case Right(ok) => Ok(ok)
-    case Left(e)   => Err(e)
+    case Left(e)   => Failure(e)
   }
 
   /**
@@ -67,6 +67,6 @@ object ToResult {
    */
   implicit val booleanToResult: ToResult[Unit, Unit, Boolean] = {
     case true  => Ok.unit
-    case false => Err.unit
+    case false => Failure.unit
   }
 }

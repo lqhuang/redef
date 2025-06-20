@@ -1,4 +1,4 @@
-package redef.result
+package redef.util
 
 /**
  * Used to convert a `Result[T, E]` to a value of type `V`
@@ -45,6 +45,12 @@ object FromResult {
    * true
    * }}}
    */
-  implicit def tryFromResult[T]: FromResult[T, Throwable, scala.util.Try[T]] =
+
+  implicit def tryFromResult[T]: FromResult[T, Exception, Try[T]] =
     _.toTry
+
+  implicit def scuTryFromResult[T]
+      : FromResult[T, Throwable, scala.util.Try[T]] =
+    _.toTry
+
 }
