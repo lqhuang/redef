@@ -56,8 +56,10 @@ trait RedefModule extends CrossScalaModule
 
   def scalacOptions = Seq(
     "-source:future",
-    "-language:experimental.modularity",
-    "-P:acyclic:force",
+    // "-language:experimental.modularity",
+    "-Yexplicit-nulls",
+    "-Wsafe-init",
+    // "-P:acyclic:force",
   )
 }
 
