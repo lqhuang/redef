@@ -3,8 +3,9 @@ package redef.util
 import scala.annotation.{implicitNotFound, experimental}
 import scala.collection.immutable.Seq
 import scala.annotation.targetName
+import scala.runtime.Statics
 
-sealed abstract class Result[+T, +E] extends Product with Serializable {
+sealed abstract trait Result[+T, +E] extends Product with Serializable {
 
   /**
    * Returns `true` if the `Result` is a `Ok`, `false` otherwise.
@@ -17,18 +18,16 @@ sealed abstract class Result[+T, +E] extends Product with Serializable {
   def isFailure: Boolean
 
   /**
-   * Returns the value from this `Ok` or throws the err if this is a `Failure`.
-   */
-  def get: T
-
-  /**
    * Returns the value from this `Ok` or the given `default` argument if this is
    * a `Failure`.
    *
    * ''Note:'': This will throw an err if it is not a success and default throws
    * an err.
    */
-  def getOrElse[U >: T](default: => U): U
+  def getOrElse[U >: T](default: => U): U = this match {
+    case Ok(t)      => t
+    case Failure(e) => default // if default throws, then this will throw
+  }
 
   /**
    * Applies `fa` if this is a `Failure` or `fb` if this is a `Ok`. If `fb` is
@@ -41,45 +40,47 @@ sealed abstract class Result[+T, +E] extends Product with Serializable {
    * @return
    *   the results of applying the function
    */
-  def fold[O](fok: T => O, ffail: E => O): O
+  def fold[O](fok: T => O, ffail: E => O): O = this match {
+    case Ok(t)      => fok(t)
+    case Failure(e) => ffail(e)
+  }
 
   /**
    * Returns this `Result` if it's a `Ok` or the given `default` argument if
    * this is a `Failure`.
    */
-  def orElse[U >: T, F >: E](default: => Result[U, F]): Result[U, F]
-  // def orElse[U >: T, F >: E](op: E => Result[U, F]): Result[U, F]
+  def orElse[U >: T, F >: E](default: => Result[U, F]): Result[U, F] =
+    this match {
+      case Ok(_)      => this
+      case Failure(_) => default
+    }
 
   /**
    * Applies the given function `f` if this is a `Ok`, otherwise returns `Unit`
    * if this is a `Failure`.
-   *
-   * ''Note:'' If `f` throws, then this method may throw an err.
    */
-  def foreach[U](f: T => U): Unit
+  def foreach[U](f: T => U): Unit = this match {
+    case Ok(t)      => f(t)
+    case Failure(_) => ()
+  }
 
   /**
    * Returns the given function applied to the value from this `Ok` or returns
    * this if this is a `Failure`.
    */
-  def flatMap[U, F >: E](f: T => Result[U, F]): Result[U, F]
+  def flatMap[U, F >: E](f: T => Result[U, F]): Result[U, F] = this match {
+    case Ok(t)      => f(t)
+    case Failure(e) => Failure(e)
+  }
 
   /**
    * Maps the given function to the value from this `Ok` or returns this if this
    * is a `Failure`.
    */
-  def map[U](f: T => U): Result[U, E]
-
-  /**
-   * Applies the given partial function to the value from this `Ok` or returns
-   * this if this is a `Failure`.
-   */
-  def collect[U >: T](pf: PartialFunction[T, U]): Result[U, E]
-
-  /**
-   * Converts this to a `Failure` if the predicate is not satisfied.
-   */
-  def filter(p: T => Boolean): Result[T, E]
+  def map[U](f: T => U): Result[U, E] = this match {
+    case Ok(t)      => Ok(f(t))
+    case Failure(e) => Failure(e)
+  }
 
   /**
    * Returns `Ok` with the existing value of `Ok` if this is a `Ok` and the
@@ -87,24 +88,11 @@ sealed abstract class Result[+T, +E] extends Product with Serializable {
    * is a `Ok` and the given predicate `p` does not hold for the right value, or
    * `Failture` with the existing value of `Failture` if this is a `Failture`.
    */
-  @targetName("filterOrElse")
-  def ensure[F >: E](p: T => Boolean, default: => F): Result[T, F] =
+  def filterOrElse[F >: E](p: T => Boolean, default: => F): Result[T, F] =
     this match {
       case Ok(t) if !p(t) => Failure(default)
       case _              => this
     }
-
-  /**
-   * Applies the given function `f` if this is a `Failure`, otherwise returns
-   * this if this is a `Ok`. This is like `flatMap` for the err.
-   */
-  def recoverWith[U >: T](pf: PartialFunction[E, Result[U, E]]): Result[U, E]
-
-  /**
-   * Applies the given function `f` if this is a `Failure`, otherwise returns
-   * this if this is a `Ok`. This is like map for the err.
-   */
-  def recover[U >: T](pf: PartialFunction[E, U]): Result[U, E]
 
   /**
    * Transforms a nested `Result`, ie, a `Result` of type `Result[Result[T,
@@ -141,14 +129,8 @@ sealed abstract class Result[+T, +E] extends Product with Serializable {
    */
   def flatten[U, F >: E](using
       @implicitNotFound("${T} is not a Result[${U}, ${F}]")
-      tv: T <:< Result[U, F]
-  ): Result[U, F] = this match {
-    case Ok(t) =>
-      tv(t) match
-        case Ok(u)      => Ok(u)
-        case Failure(e) => Failure(e)
-    case Failure(e) => Failure(e)
-  }
+      ev: T <:< Result[U, F]
+  ): Result[U, F] = flatMap(ev)
 
   /**
    * Converts from `Result[Option[T], E]` to `Result[T, E]`
@@ -180,86 +162,13 @@ sealed abstract class Result[+T, +E] extends Product with Serializable {
    */
   def flatten[U, F >: E](defaultFailure: => F)(using
       @implicitNotFound("${T} is not a Option[${U}]")
-      tv: T <:< Option[U]
+      ev: T <:< Option[U]
   ): Result[U, F] = this match {
     case Ok(ok) =>
-      tv(ok) match {
+      ev(ok) match
         case Some(u) => Ok(u)
         case None    => Failure(defaultFailure)
-      }
     case Failure(e) => Failure(e)
-  }
-
-  /**
-   * Converts from `Result[T, Result[T, E]]` to `Result[T, E]`
-   *
-   * Examples
-   *
-   * ```scala
-   * >>> val x: Result[Int, Result[Int, String]] = Err(Err("Some Error"))
-   * >>> x.flatten
-   * Err("Some Error")
-   *
-   * >>> val y: Result[Int, Result[Int, String]] = Err(Ok(6))
-   * >>> y.flatten
-   * Ok(6)
-   *
-   * >>> val z: Result[Int, Result[Int, String]] = Ok(6)
-   * >>> z.flatten
-   * Ok(6)
-   *
-   * // Flattening only removes one level of nesting at a time:
-   * >>> val multi: Result[Int, Result[Int, Result[Int, String]]] = Err(Err(Err("Some Error")))
-   * >>> multi.flatten
-   * Err(Err(Some Error))
-   * >>> multi.flatten.flatten
-   * Err(Some Error)
-   * ```
-   *
-   * @group Transform
-   */
-  def flatten[U >: T, F](using
-      @implicitNotFound("${E} is not a Result[${U}, ${F}]")
-      ev: E <:< Result[U, F]
-  ): Result[U, F] = orElse(ev)
-
-  /**
-   * Converts from `Result[T, Option[E]]` to `Result[T, E]`
-   *
-   * Examples
-   *
-   * ```scala
-   * >>> val x: Result[Int, Option[String]] = Err(Some("Some Error"))
-   * >>> x.flatten(-1)
-   * Err("Some Error")
-   *
-   * >>> val y: Result[Int, Option[String]] = Err(None)
-   * >>> y.flatten(-1)
-   * Ok(-1)
-   *
-   * >>> val z: Result[Int, Option[String]] = Ok(6)
-   * >>> z.flatten(-1)
-   * Ok(6)
-   *
-   * // Flattening only removes one level of nesting at a time:
-   * >>> val multi: Result[Int, Option[Option[String]]] = Err(Some(Some("Some Error")))
-   * >>> multi.flatten(-1)
-   * Err(Some("Some Error"))
-   * >>> multi.flatten(-1).flatten(-2)
-   * Err("Some Error")
-   * ```
-   *
-   * @group Transform
-   */
-  def flatten[U >: T, F](defaultOk: => U)(using
-      @implicitNotFound("${E} is not a Option[${F}]")
-      ev: E <:< Option[F]
-  ): Result[U, F] = this match {
-    case Failure(e) =>
-      ev(e) match
-        case Some(f) => Failure(f)
-        case None    => Ok(defaultOk)
-    case Ok(t) => Ok(t)
   }
 
   /**
@@ -267,15 +176,21 @@ sealed abstract class Result[+T, +E] extends Product with Serializable {
    * type `Failure`, or conversely, by applying `s` if this is a `Ok`.
    */
   def transform[U >: T, F >: E](
-      ok: T => Result[U, F],
-      fail: E => Result[U, F]
-  ): Result[U, F]
+      fok: T => Result[U, F],
+      ffail: E => Result[U, F]
+  ): Result[U, F] = this match {
+    case Ok(t)      => fok(t)
+    case Failure(e) => ffail(e)
+  }
 
   /**
    * Inverts this `Result`. If this is a `Failure`, returns its err wrapped in a
    * `Ok`. If this is a `Ok`, returns a `Failure` containing an `T`.
    */
-  def swap: Result[E, T]
+  def swap: Result[E, T] = this match {
+    case Ok(t)      => Failure(t)
+    case Failure(e) => Ok(e)
+  }
 
   def exists(p: T => Boolean): Boolean = this match {
     case Ok(t) => p(t)
@@ -292,33 +207,38 @@ sealed abstract class Result[+T, +E] extends Product with Serializable {
     case _     => false
   }
 
+  @experimental
+  def to[V](using fromResult: FromResult[T, E, V]): V = fromResult(this)
+
   /**
    * Returns `None` if this is a `Failure` or a `Some` containing the value if
    * this is a `Ok`.
    */
-  def toOption: Option[T]
+  def toOption: Option[T] =
+    to[Option[T]](using FromResult.optionFromResult[T, E])
 
   /**
    * Returns `Left` if this is a `Failure`, otherwise returns `Right` with `Ok`
    * value.
    */
-  def toEither: Either[E, T]
+  def toEither: Either[E, T] =
+    to[Either[E, T]](using FromResult.eitherFromResult[T, E])
 
   /**
    * Returns a `Seq` containing the `Ok` value if it exists or an empty `Seq` if
    * this is a `Failture`.
    */
-  def toSeq: Seq[T]
+  def toSeq: Seq[T] = to[Seq[T]](using FromResult.seqFromResult[T, E])
 
-  def toTry(using ev: A <:< Throwable): Try[T] = this match {
-    case Failure(e) => ev(e)
-    case _          => this
-  }
+  // def toTry(using ev: A <:< Throwable): Try[T] = this match {
+  //   case Failure(e) => ev(e)
+  //   case _          => this
+  // }
 
-  def toTry(using ev: A <:< Throwable): Try[T] = this match {
-    case Failure(e) => Failure(ev(e))
-    case _          => this
-  }
+  // def toSaferTry(using ev: A <:< Throwable): Try[T] = this match {
+  //   case Failure(e) => Failure(ev(e))
+  //   case _          => this
+  // }
 
   /// new methods
 
@@ -329,42 +249,101 @@ sealed abstract class Result[+T, +E] extends Product with Serializable {
   }
 
   /**
-   * An alias of [[flatten]] for consistency with `Either` API, analogous to
-   * `joinRight`
+   * Applies the given function `f` if this is a `Failure`, otherwise returns
+   * this if this is a `Ok`. This is like `flatMap` for the exception.
    *
-   * @group Transform
+   * ===Examples===
+   *
+   * {{{
+   * >>> def sq(x: Int): Result[Int, Int] = { Ok(x * x) }
+   * >>> def fail(x: Int): Result[Int, Int] = { Failure(x) }
+   *
+   * >>> Ok(2).recoverWith(sq).recoverWith(sq)
+   * Ok(2)
+   *
+   * >>> Ok(2).recoverWith(fail).recoverWith(sq)
+   * Ok(2)
+   *
+   * >>> Failure(3).recoverWith(sq).recoverWith(fail)
+   * Ok(9)
+   *
+   * >>> Failure(3).recoverWith(fail).recoverWith(fail)
+   * Failure(3)
+   * }}}
    */
-  @experimental
-  def joinOk[U, F >: E](using
-      @implicitNotFound("${T} is not a Result[${U}, ${F}]")
-      tv: T <:< Result[U, F]
-  ): Result[U, F] = flatten(using tv)
+  def recoverWith[U >: T, F](rf: E => Result[U, F]): Result[U, F] = this match {
+    case Ok(t)      => Ok(t)
+    case Failure(e) => rf(e)
+  }
 
   /**
-   * An alias of [[flatten]] for consistency with `Either` API, analogous to
-   * `joinLeft`
+   * Applies the given function `f` if this is a `Failure`, otherwise returns
+   * this if this is a `Ok`. This is like map for the exception.
+   *
+   * Maps a `Result[E, T]` to `Result[F, T]` by applying a function to a
+   * contained `Err` value, leaving an `Ok` value untouched.
+   *
+   * This function can be used to pass through a successful result while
+   * handling an error.
+   *
+   * ==Examples==
+   *
+   * {{{
+   * >>> def square(i: Int) = i * i
+   *
+   * >>> Err(1).mapErr(square(_))
+   * Err(1)
+   *
+   * >>> Err(2).mapErr(square(_))
+   * Err(4)
+   *
+   * >>> Ok[Int, String]("Some Value").mapErr(square(_))
+   * Ok(Some Value)
+   * }}}
+   */
+  def recover[F](rf: E => F): Result[T, F] = this match {
+    case Ok(t)      => Ok(t)
+    case Failure(e) => Failure(rf(e))
+  }
+
+  /**
+   * `joinOk` is analogous to `joinRight` for consistency with `Either` API
    *
    * @group Transform
    */
-  @experimental
+  def joinOk[U, F >: E](using
+      @implicitNotFound("${T} is not a Result[${U}, ${F}]")
+      ev: T <:< Result[U, F]
+  ): Result[U, F] = flatten(using ev)
+
+  /**
+   * `joinFailure` is analogous to `joinLeft` for consistency with `Either` API
+   *
+   * @group Transform
+   */
   def joinFailure[U >: T, F](using
       @implicitNotFound("${E} is not a Result[${U}, ${F}]")
       ev: E <:< Result[U, F]
-  ): Result[U, F] = flatten(using ev)
+  ): Result[U, F] = this match {
+    case Ok(t) => this.asInstanceOf[Result[U, F]]
+    case Failure(e) =>
+      ev(e) match {
+        case Ok(u)      => Ok(u)
+        case Failure(f) => Failure(f)
+      }
+  }
 
   @experimental
-  def ok: Option[T]
+  def ok: Option[T] = this match {
+    case Ok(t)      => Some(t)
+    case Failure(_) => None
+  }
 
   @experimental
-  def failure: Option[E]
-
-  // def toFailureSeq: Seq[E]
-
-  @experimental
-  def to[V](using fromResult: FromResult[T, E, V]): V = fromResult(this)
-
-  @experimental
-  def from[V](using toResult: ToResult[T, E, V]): V = toResult(this)
+  def failure: Option[E] = this match {
+    case Ok(_)      => None
+    case Failure(e) => Some(e)
+  }
 
 }
 
@@ -376,8 +355,10 @@ object Result {
       failure: => E
   ): Result[T, E] = if (test) Ok(ok) else Failure(failure)
 
-  def apply[T, E](value: V)(using toResult: ToResult[T, E, V]): Result[T, E] =
-    toResult(value)
+  def from[T, E, V](v: V)(using toResult: ToResult[T, E, V]): Result[T, E] =
+    toResult(v)
+
+  import ToResult.*
 
   /**
    * Allows use of a `merge` method to extract values from Either instances
@@ -390,149 +371,202 @@ object Result {
    *  r.merge: Seq[Int] // Vector(1)
    * }}}
    */
-  implicit class MergeOps[A](private val x: Result[A, A]) extends AnyVal {
-    def merge: A = x match {
+  implicit class MergeOps[A](private val r: Result[A, A]) extends AnyVal {
+    def merge: A = r match {
       case Ok(v)      => v
       case Failure(v) => v
     }
   }
 
-  // def apply[T, E, V](value: V)(using
-  //     toResult: ToResult[T, E, V]
-  // ): Result[T, E] =
-  //   toResult(value)
+  def ok[T, E](value: T): Result[T, E] = Ok(value)
 
+  def failure[T, E](err: E): Result[T, E] = Failure(err)
 }
 
-case class Ok[+T, +E](value: T) extends Result[T, E] with AnyVal {
-  inline def isOk: Boolean = true
+case class Ok[+T, +E](value: T) extends Result[T, E] {
+  def isOk: Boolean = true
 
-  inline def isFailure: Boolean = false
+  def isFailure: Boolean = false
 
-  inline def get: T = value
+  def intoOk: T = value
 
-  inline def getOrElse[U >: T](default: => U): U = get
-
-  inline def orElse[U >: T](default: => Result[U, F]): Result[U, F] = this
-
-  inline def flatMap[U, F >: E](f: T => Result[U, F]): Result[U, F] = f(value)
-
-  // inline def flatten[U](using ev: T <:< Result[U, E]): Result[U, E] = value
-
-  inline def foreach[U](f: T => U): Unit = f(value)
-
-  inline def transform[U, F](
-      ok: T => Result[U, F],
-      fail: E => Result[U, F]
-  ): Result[U, F] = this flatMap ok
-
-  inline def map[U](f: T => U): Result[U, E] = Ok(f(value))
-
-  inline def collect[U](pf: PartialFunction[T, U]): Result[U, E] =
-    val marker = Statics.pfMarker
-    try {
-      val v =
-        pf.applyOrElse(value, ((x: T) => marker).asInstanceOf[Function[T, U]])
-      if marker.ne(v.asInstanceOf[AnyRef])
-      then Ok(v)
-      else
-        Failure(NoSuchElementException("Predicate does not hold for " + value))
-    } catch {
-      case NonFatal(e) => Failure(e)
-    }
-
-  inline def filter(p: T => Boolean): Result[T, E] =
-    try {
-      if p(value)
-      then this
-      else
-        Failure(NoSuchElementException("Predicate does not hold for " + value))
-    } catch {
-      case NonFatal(e) => Failure(e)
-    }
-
-  inline def recover[U >: T](pf: PartialFunction[E, U]): Result[U, E] =
-    this
-
-  inline def recoverWith[U >: T](
-      pf: PartialFunction[E, Result[U, E]]
-  ): Result[U, E] = this
-
-  inline def swap: Result[E, T] = Failure(value)
-
-  inline def toOption: Option[T] = Some(value)
-
-  inline def toEither: Either[E, T] = Right(value)
-
-  inline def fold[O](fok: T => O, ffail: E => O): O = fok(value)
+  /**
+   * Upcasts this `Ok[T, E]` to `Result[T, F]`
+   */
+  def withFailure[F >: E]: Result[T, F] = this
 }
 object Ok {
-  val unit: Ok[Nothing, Unit] = Ok(())
+  val unit: Result[Unit, Nothing] = Ok(())
 }
 
-case class Failure[+T, +E](err: E) extends Result[T, E] with AnyVal {
+case class Failure[+T, +E](err: E) extends Result[T, E] {
   def isOk: Boolean = false
 
   def isFailure: Boolean = true
 
-  inline def getOrElse[U >: T](default: => U): U = default
+  def intoFailure: E = err
 
-  inline def orElse[U >: T](default: => Result[U, F]): Result[U, F] = default
-
-  inline def flatMap[U, F >: E](f: T => Result[U, F]): Result[U, F] =
-    this.asInstanceOf[Result[U, E]]
-
-  inline def flatten[U](implicit ev: T <:< Result[U, E]): Result[U, E] =
-    this.asInstanceOf[Result[U, E]]
-
-  inline def foreach[U](f: T => U): Unit = ()
-
-  inline def transform[U, F](
-      ok: T => Result[U, F],
-      fail: E => Result[U, F]
-  ): Result[U, F] =
-    fail(err)
-
-  inline def map[U](f: T => U): Result[U, E] = this.asInstanceOf[Result[U, E]]
-
-  inline def collect[U](pf: PartialFunction[T, U]): Result[U, E] =
-    this.asInstanceOf[Result[U, E]]
-
-  inline def filter(p: T => Boolean): Result[T, E] = this
-
-  inline def recover[U >: T](pf: PartialFunction[E, U]): Result[U, E] =
-    val marker = Statics.pfMarker
-    try {
-      val v = pf.applyOrElse(err, (x: E) => marker)
-      if (marker ne v.asInstanceOf[AnyRef])
-      then Ok(v.asInstanceOf[U])
-      else this
-    } catch {
-      case NonFatal(e) => Failure(e)
-    }
-
-  inline def recoverWith[U >: T](
-      pf: PartialFunction[E, Result[U, E]]
-  ): Result[U, E] =
-    val marker = Statics.pfMarker
-    try {
-      val v = pf.applyOrElse(err, (x: E) => marker)
-      if (marker ne v.asInstanceOf[AnyRef])
-      then v.asInstanceOf[Result[U, E]]
-      else this
-    } catch {
-      case NonFatal(e) => Failure(e)
-    }
-
-  inline def swap: Result[E, T] = Ok(err)
-
-  inline def toOption: Option[T] = None
-
-  inline def toEither: Either[E, T] = Left(err)
-
-  inline def fold[O](fok: T => O, ffail: E => O): O = ffail(err)
-
+  /**
+   * Upcasts this `Failure[T, E]` to `Result[U, E]`
+   */
+  def withOk[U >: T]: Result[U, E] = this
 }
 object Failure {
-  val unit: Failure[Unit, Nothing] = Failure(())
+  val unit: Result[Nothing, Unit] = Failure(())
+}
+
+/**
+ * Used to convert a `Result[T, E]` to a value of type `V`
+ *
+ * This interface is leveraged by the [[Result.to]] method.
+ */
+trait FromResult[-T, -E, +V] {
+  def apply(result: Result[T, E]): V
+}
+
+object FromResult {
+
+  /**
+   * Converts `Result[T, E]` into `Option[T]`
+   *
+   * ===Examples===
+   *
+   * {{{
+   * >>> val ok = Ok(1)
+   * >>> ok.to[Option[Int]] == Some(1)
+   * true
+   *
+   * >>> val err = Err("Error")
+   * >>> err.to[Option[Int]] == None
+   * true
+   * }}}
+   */
+  implicit def optionFromResult[T, E]: FromResult[T, E, Option[T]] = {
+    case Ok(t)      => Some(t)
+    case Failure(_) => None
+  }
+
+  /**
+   * Converts `Result[T, E]` into `Either[E, T]`
+   *
+   * ===Examples===
+   *
+   * {{{
+   * >>> val ok = Ok(1)
+   * >>> ok.to[Either[String, Int]] == Right(1)
+   * true
+   *
+   * >>> val err = Err("Error")
+   * >>> err.to[Either[String, Int]] == Left("Error")
+   * true
+   * }}}
+   */
+  implicit def eitherFromResult[T, E]: FromResult[T, E, Either[E, T]] = {
+    case Ok(t)      => Right(t)
+    case Failure(e) => Left(e)
+  }
+
+  implicit def seqFromResult[T, E]: FromResult[T, E, Seq[T]] = {
+    case Ok(t)      => Seq(t)
+    case Failure(_) => Seq.empty
+  }
+
+  /**
+   * Converts `Result[Throwable, T]` into `Try[T]`
+   *
+   * ===Examples===
+   *
+   * {{{
+   * >>> val ok = Ok(1)
+   * >>> ok.to[scala.util.Try[Int]] == scala.util.Success(1)
+   * true
+   *
+   * >>> val ex: Exception = new Exception("Error")
+   * >>> val err = Err(ex)
+   * >>> err.to[scala.util.Try[Int]] == scala.util.Failure(ex)
+   * true
+   * }}}
+   */
+
+  // implicit def tryFromResult[T]: FromResult[T, Exception, Try[T]] = {
+  //   case Ok(t)      => Success(t)
+  //   case Failure(e) => Failure(e)
+  // }
+
+  implicit def scuTryFromResult[T]
+      : FromResult[T, Throwable, scala.util.Try[T]] = {
+    case Ok(t)      => scala.util.Success(t)
+    case Failure(e) => scala.util.Failure(e)
+  }
+
+}
+
+/**
+ * Used to convert a value of type `V` to a `Result[T, E]`
+ *
+ * This interface is leveraged by the [[Result.apply]] method and
+ * [[extensions.all.Ops.toResult]].
+ */
+trait ToResult[+T, +E, -V] {
+  def apply(value: V): Result[T, E]
+}
+object ToResult {
+
+  /**
+   * Converts `Either[E, T]` into `Result[T, E]`
+   *
+   * ===Examples===
+   *
+   * {{{
+   * >>> Result(Right(1)) == Ok(1)
+   * true
+   *
+   * >>> Result(Left("Error")) == Failue("Error")
+   * true
+   * }}}
+   */
+  implicit def eitherToResult[T, E]: ToResult[T, E, Either[E, T]] = {
+    case Right(ok) => Ok(ok)
+    case Left(e)   => Failure(e)
+  }
+
+  /**
+   * Converts `scala.util.Try[T]` into `Result[T, Throwable]`
+   *
+   * ===Examples===
+   *
+   * {{{
+   * >>> Result(scala.util.Success(1)) == Ok(1)
+   * true
+   *
+   * >>> val ex: Exception = new Exception("Error")
+   * >>> Result(scala.util.Failure(ex)) == Err(ex)
+   * true
+   * }}}
+   */
+  implicit def scuTryToResult[T]: ToResult[T, Throwable, scala.util.Try[T]] = {
+    case scala.util.Success(v) => Ok(v)
+    case scala.util.Failure(e) => Failure(e)
+  }
+
+  /**
+   * Converts `Boolean` into `Result[Unit, Unit]`
+   *
+   *   - `true` is `Ok`
+   *   - `false is `Err`
+   *
+   * ===Examples===
+   *
+   * {{{
+   * >>> Result(true) == Ok.unit
+   * true
+   *
+   * >>> Result(false) == Err.unit
+   * true
+   * }}}
+   */
+  implicit val booleanToResult: ToResult[Unit, Unit, Boolean] = {
+    case true  => Ok.unit
+    case false => Failure.unit
+  }
 }

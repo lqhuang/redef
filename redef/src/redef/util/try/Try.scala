@@ -1,10 +1,7 @@
-// Ported from Scala standard library
-
 package redef.util
 
 import scala.runtime.Statics
 import scala.util.control.NonFatal
-import scala.util.Either
 
 /**
  * The `Try` type represents a computation that may fail during evaluation by
@@ -57,11 +54,61 @@ import scala.util.Either
  * ''Note:'': all Try combinators will catch exceptions and return failure
  * unless otherwise specified in the documentation.
  */
-sealed abstract class Try[+T] extends Result[T, Throwable] {
+type Try[+T] = Result[T, Throwable]
 
-  def get: T = this match {
+extension [T](result: Try[T]) {
+
+  /**
+   * Returns the value from this `Ok` or throws the exception if this is a
+   * `Failure`.
+   */
+  def get: T = result match {
     case Ok(value)          => value.asInstanceOf[T]
     case Failure(exception) => throw (exception.asInstanceOf[Throwable])
+  }
+
+  /**
+   * Inverts this `Try`. If this is a `Failure`, returns its exception wrapped
+   * in a `Ok`. If this is a `Ok`, returns a `Failure` containing an
+   * `UnsupportedOperationException`.
+   */
+  inline def failed: Try[Throwable] =
+    result.swap.asInstanceOf[Try[Throwable]]
+
+  /**
+   * Applies the given partial function to the value from this `Ok` or returns
+   * this if this is a `Failure`.
+   */
+  def collect[U](pf: PartialFunction[T, U]): Try[U] = result match {
+    case Failure(exception) => this.asInstanceOf[Try[U]]
+    case Ok(value)          =>
+      // val marker = Statics.pfMarker
+      try
+        if pf.isDefinedAt(value)
+        then Ok(pf(value))
+        else
+          Failure(
+            new NoSuchElementException(
+              "Partial function not defined for " + value
+            )
+          )
+      catch case NonFatal(e) => Failure(e)
+  }
+
+  /**
+   * Converts this to a `Failure` if the predicate is not satisfied.
+   */
+  def filter(p: T => Boolean): Try[T] = result match {
+    case Failure(exception) => result
+    case Ok(value) =>
+      try
+        if p(value)
+        then result
+        else
+          Failure(
+            new NoSuchElementException(s"Predicate does not hold for ${value}")
+          )
+      catch case NonFatal(exc) => Failure(exc)
   }
 
   /**
@@ -82,23 +129,43 @@ sealed abstract class Try[+T] extends Result[T, Throwable] {
    *   `foreach`, and `withFilter` operations. All these operations apply to
    *   those elements of this Try which satisfy the predicate `p`.
    */
-  inline final def withFilter(p: T => Boolean): WithFilter = WithFilter(p)
+  inline final def withFilter(pred: T => Boolean): WithFilter[T] =
+    WithFilter(result, pred)
 
   /**
-   * We need a whole WithFilter class to honor the "doesn't create a new
-   * collection" contract even though it seems unlikely to matter much in a
-   * collection with max size 1.
+   * Applies the given function `f` if this is a `Failure`, otherwise returns
+   * this if this is a `Ok`. This is like `flatMap` for the exception.
    */
-  private final class WithFilter(p: T => Boolean) {
-    def map[U](f: T => U): Result[U, E] = Result.this filter p map f
+  def recoverWith[U >: T](
+      pf: PartialFunction[Throwable, Try[U]]
+  ): Try[U] =
+    result match {
+      case Ok(_) => result
+      case Failure(exception) =>
+        val marker = Statics.pfMarker
+        try
+          val v = pf.applyOrElse(exception, (x: Throwable) => marker)
+          if marker ne v.asInstanceOf[AnyRef]
+          then v.asInstanceOf[Try[U]]
+          else result
+        catch case NonFatal(e) => Failure(e)
+    }
 
-    def flatMap[U](f: T => Result[U, E]): Result[U, E] =
-      Result.this filter p flatMap f
-
-    def foreach[U](f: T => U): Unit = Result.this filter p foreach f
-
-    def withFilter(q: T => Boolean): WithFilter = WithFilter(x => p(x) && q(x))
-  }
+  /**
+   * Applies the given function `f` if this is a `Failure`, otherwise returns
+   * this if this is a `Ok`. This is like map for the exception.
+   */
+  def recover[U >: T](pf: PartialFunction[Throwable, U]): Try[U] =
+    result match {
+      case Ok(_) => result
+      case Failure(exc) =>
+        val marker = Statics.pfMarker
+        try
+          if pf.isDefinedAt(exc)
+          then Ok(pf(exc))
+          else result
+        catch case NonFatal(e) => Failure(e)
+    }
 
 }
 
@@ -118,10 +185,52 @@ object Try {
    *   the result of evaluating the value, as a `Ok` or `Failure`
    */
   def apply[T](r: => T): Try[T] =
-    try {
+    try
       val r1 = r
       Ok(r1)
-    } catch {
-      case NonFatal(e) => Failure(e)
-    }
+    catch case NonFatal(e) => Failure(e)
+
+}
+
+/**
+ * a whole WithFilter class for Try to honor the "doesn't create a new
+ * collection" contract even though it seems unlikely to matter much in a
+ * collection with max size 1.
+ */
+private final class WithFilter[T](res: Try[T], p: T => Boolean) {
+  def map[U](f: T => U): Try[U] = res.filter(p).map(f)
+
+  def flatMap[U](f: T => Try[U]): Try[U] = res.filter(p).flatMap(f)
+
+  def foreach[U](f: T => U): Unit = res.filter(p).foreach(f)
+
+  // def withFilter(res: Try[T], q: T => Boolean): WithFilter[T] =
+  //   new WithFilter(res, x => (p(x) && q(x)))
+}
+
+opaque type SafeTry[+T, +E <: Exception] = Result[T, E]
+object SafeTry {
+
+  /**
+   * Constructs a `SafeTry` using the by-name parameter as a result value.
+   *
+   * The evaluation of `r` is attempted once.
+   *
+   * Any non-fatal exception is caught and results in a `Failure` that holds the
+   * exception.
+   *
+   * @param r
+   *   the result value to compute
+   * @return
+   *   the result of evaluating the value, as a `Ok` or `Failure`
+   */
+  def apply[T, E <: Exception](r: => T throws E): SafeTry[T, E] =
+    try
+      val r1 = r
+      Ok(r1)
+    catch case e: E => Failure(e)
+
+  def ok[T, E <: Exception](value: T): SafeTry[T, E] = Ok(value)
+
+  def failure[T, E <: Exception](err: E): SafeTry[T, E] = Failure(err)
 }

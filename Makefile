@@ -1,5 +1,5 @@
 MILL := mill
-TASK_TARGET := redef[]
+TASK_TARGET := redef.jvm[]
 
 .PHONY: bloop
 bloop:

@@ -1,14 +1,31 @@
 package redef.io
 
-import java.io.IOException
+import java.io.{IOException}
+import java.io.File
+import java.nio.file.{DirectoryNotEmptyException}
 import java.nio.file.Files
 import java.nio.file.Path
 
-import redef.util.Using.Releasable
+// import scala.language.experimental.saferExceptions
 
-opaque type TempFile = File
+import scala.util.Either
 
-given tempFileReleasable: Releasable[TempFile] = new Releasable[TempFile] {
-  def release(resource: TempFile)(using CanThrow[IOException]): Unit =
-    Files.deleteIfExists(resource)
+import scala.util.Using.Releasable
+
+object TempFileUtils {
+  opaque type TempFile = File
+  type Excs = DirectoryNotEmptyException | IOException | SecurityException
+
+  given tempFileReleasable: Releasable[TempFile] =
+    new Releasable[TempFile] {
+      def release(resource: TempFile): Unit =
+        try {
+          Files.deleteIfExists(resource.toPath())
+        } catch {
+          case e: Excs => {
+            // Ignore the exception, as we are deleting a temporary file.
+            // Warn if necessary.
+          }
+        }
+    }
 }

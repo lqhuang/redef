@@ -1,122 +1,73 @@
 package redef.math
 
 import scala.annotation.targetName
-import scala.language.experimental.saferExceptions
+import scala.math.{Numeric, Ordered}
 
-import redef.util.Try
+import redef.util.SafeTry
 
-/// TODO(@lqhuang):
-///   metal not supports syntax like "T throws E" yet, so we use CanThrow[E] instead.
-///   Improve it when metal supports it.
+class OverflowException(re: ArithmeticException) extends Exception
 
-trait Arithmetic[T](using CanThrow[ArithmeticException]) {
-
-  inline def negateExact(x: T): T
-  inline def addExact(x: T, y: T): T
-  inline def subtractExact(x: T, y: T): T
-  inline def multiplyExact(x: T, y: T): T
-  inline def floorDiv(x: T, y: T): T
-  inline def floorMod(x: T, y: T): T
+trait SafeArithmetic[T, E <: OverflowException](using Numeric[T]) {
+  def negateExact(x: T): T throws E
+  def addExact(x: T, y: T): T throws E
+  def subtractExact(x: T, y: T): T throws E
+  def multiplyExact(x: T, y: T): T throws E
+  def floorDivExact(x: T, y: T): T throws E
+  def floorModExact(x: T, y: T): T throws E
 
   extension (x: T) {
-    inline def unary_-(using CanThrow[E]): T =
-      negateExact(x)
+    def unary_- : T throws E = negateExact(x)
 
-    inline def +(y: T)(using CanThrow[E]): T =
-      addExact(x, y)
-
-    @targetName("maybeAdd")
-    inline def ?+(y: T)(using CanThrow[E]): Option[T] =
-      try Option(addExact(x, y))
-      catch case ArithmeticException => None
+    def +(y: T): T throws E = addExact(x, y)
 
     @targetName("tryAdd")
-    inline def +?(y: T): Try[T] =
-      Try(addExact(x, y))
+    def +?(y: T): SafeTry[T, E] = SafeTry(addExact(x, y))
 
-    inline def -(y: T)(using CanThrow[E]): T =
-      subtractExact(x, y)
-
-    @targetName("maybeSubtract")
-    inline def ?-(y: T)(using CanThrow[E]): Option[T] =
-      try Option(subtractExact(x, y))
-      catch case ArithmeticException => None
+    def -(y: T): T throws E = subtractExact(x, y)
 
     @targetName("trySubtract")
-    inline def -?(y: T): Try[T] =
-      Try(subtractExact(x, y))
+    def -?(y: T): SafeTry[T, E] = SafeTry(subtractExact(x, y))
 
-    inline def *(y: T)(using CanThrow[E]): T =
-      multiplyExact(x, y)
-
-    @targetName("maybeMultiply")
-    inline def ?*(y: T): Option[T] =
-      try Option(multiplyExact(x, y))
-      catch case ArithmeticException => None
+    def *(y: T): T throws E = multiplyExact(x, y)
 
     @targetName("tryMultiply")
-    inline def *?(y: T): Try[T] =
-      Try(multiplyExact(x, y))
+    def *?(y: T): SafeTry[T, E] = SafeTry(multiplyExact(x, y))
 
-    inline def /(y: T)(using CanThrow[E]): T =
-      floorDiv(x, y)
-
-    @targetName("maybeDivide")
-    inline def ?/(y: T)(using CanThrow[E]): Option[T] =
-      try Option(floorDiv(x, y))
-      catch case ArithmeticException => None
+    def /(y: T): T throws E = floorDivExact(x, y)
 
     @targetName("tryDivide")
-    inline def /?(y: T): Try[T] =
-      Try(floorDiv(x, y))
+    def /?(y: T): SafeTry[T, E] = SafeTry(floorDivExact(x, y))
 
-    inline def %(y: T)(using CanThrow[E]): T =
-      floorMod(x, y)
-
-    @targetName("maybeMod")
-    inline def ?%(y: T)(using CanThrow[E]): Option[T] =
-      try Option(floorMod(x, y))
-      catch case ArithmeticException => None
+    def %(y: T): T throws E = floorModExact(x, y)
 
     @targetName("tryMod")
-    inline def %?(y: T): Try[T] =
-      Try(floorMod(x, y))
+    def %?(y: T): SafeTry[T, E] = SafeTry(floorModExact(x, y))
 
-    inline def abs(using CanThrow[E]): T =
-      return if x < 0 then negateExact(x) else x
+    def abs: T throws E =
+      if Numeric[T].lt(x, Numeric[T].zero) then negateExact(x) else x
 
-    inline def absOption(using CanThrow[E]): T =
-      return if x < 0 then negateExact(x) else x
-
-    inline def absOption: Option[T] =
-      return Try(if x < 0 then negateExact(x) else x).toOption
-
-    inline def absTry: Try[T] =
-      Try(if x < 0 then negateExact(x) else x)
-
+    def absTry: SafeTry[T, E] = SafeTry(abs)
   }
 }
 
-given IntArithmetic(using
-    CanThrow[ArithmeticException]
-): Arithmetic[Int] with {
-  inline def negateExact(x: Int): Int = math.negateExact(x)
-  inline def addExact(x: Int, y: Int): Int = math.addExact(x, y)
-  inline def subtractExact(x: Int, y: Int): Int = math.subtractExact(x, y)
-  inline def multiplyExact(x: Int, y: Int): Int = math.multiplyExact(x, y)
-  inline def floorDiv(x: Int, y: Int): Int = math.floorDiv(x, y)
-  inline def floorMod(x: Int, y: Int): Int = math.floorMod(x, y)
-  inline def abs(x: Int): Int = if x < 0 then math.negateExact(x) else x
-}
 
-given LongArithmetic(using
-    CanThrow[ArithmeticException]
-): Arithmetic[Long] with {
-  inline def negateExact(x: Long): Long = math.negateExact(x)
-  inline def addExact(x: Long, y: Long): Long = math.addExact(x, y)
-  inline def subtractExact(x: Long, y: Long): Long = math.subtractExact(x, y)
-  inline def multiplyExact(x: Long, y: Long): Long = math.multiplyExact(x, y)
-  inline def floorDiv(x: Long, y: Long): Long = math.floorDiv(x, y)
-  inline def floorMod(x: Long, y: Long): Long = math.floorMod(x, y)
-  inline def abs(x: Long): Long = if x < 0 then math.negateExact(x) else x
-}
+given SafeArithmetic[Int, OverflowException](using Numeric[Int]):
+  def negateExact(x: Int): Int throws OverflowException  =
+    try       math.negateExact(x)     catch {
+      case e: ArithmeticException => throw new OverflowException(e)
+    }
+  def addExact(x: Int, y: Int): Int throws OverflowException = math.addExact(x, y)
+  def subtractExact(x: Int, y: Int): Int throws OverflowException = math.subtractExact(x, y)
+  def multiplyExact(x: Int, y: Int): Int throws OverflowException = math.multiplyExact(x, y)
+  def floorDivExact(x: Int, y: Int): Int throws OverflowException = math.floorDiv(x, y)
+  def floorModExact(x: Int, y: Int): Int throws OverflowException = math.floorMod(x, y)
+
+
+given SafeArithmetic[Long, OverflowException](using Numeric[Long]):
+  def negateExact(x: Long): Long throws OverflowException = math.negateExact(x)
+  def addExact(x: Long, y: Long): Long throws OverflowException = math.addExact(x, y)
+  def subtractExact(x: Long, y: Long): Long throws OverflowException = math.subtractExact(x, y)
+  def multiplyExact(x: Long, y: Long): Long throws OverflowException = math.multiplyExact(x, y)
+  def floorDivExact(x: Long, y: Long): Long throws OverflowException = math.floorDiv(x, y)
+  def floorModExact(x: Long, y: Long): Long throws OverflowException = math.floorMod(x, y)
+
