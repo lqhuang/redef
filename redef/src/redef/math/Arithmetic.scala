@@ -5,7 +5,7 @@ import scala.math.{Numeric, Ordered}
 
 import redef.util.SafeTry
 
-class OverflowException(re: ArithmeticException) extends Exception
+class OverflowException extends Exception
 
 trait SafeArithmetic[T, E <: OverflowException](using Numeric[T]) {
   def negateExact(x: T): T throws E
@@ -53,8 +53,10 @@ trait SafeArithmetic[T, E <: OverflowException](using Numeric[T]) {
 
 given SafeArithmetic[Int, OverflowException](using Numeric[Int]):
   def negateExact(x: Int): Int throws OverflowException  =
-    try       math.negateExact(x)     catch {
-      case e: ArithmeticException => throw new OverflowException(e)
+    try {
+      math.negateExact(x)
+    } catch {
+      case e: ArithmeticException => throw new OverflowException
     }
   def addExact(x: Int, y: Int): Int throws OverflowException = math.addExact(x, y)
   def subtractExact(x: Int, y: Int): Int throws OverflowException = math.subtractExact(x, y)

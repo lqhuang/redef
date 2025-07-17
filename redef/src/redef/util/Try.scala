@@ -132,40 +132,41 @@ extension [T](result: Try[T]) {
   inline final def withFilter(pred: T => Boolean): WithFilter[T] =
     WithFilter(result, pred)
 
-  /**
-   * Applies the given function `f` if this is a `Failure`, otherwise returns
-   * this if this is a `Ok`. This is like `flatMap` for the exception.
-   */
-  def recoverWith[U >: T](
-      pf: PartialFunction[Throwable, Try[U]]
-  ): Try[U] =
-    result match {
-      case Ok(_) => result
-      case Failure(exception) =>
-        val marker = Statics.pfMarker
-        try
-          val v = pf.applyOrElse(exception, (x: Throwable) => marker)
-          if marker ne v.asInstanceOf[AnyRef]
-          then v.asInstanceOf[Try[U]]
-          else result
-        catch case NonFatal(e) => Failure(e)
-    }
+  // /**
+  //  * Applies the given function `f` if this is a `Failure`, otherwise returns
+  //  * this if this is a `Ok`. This is like `flatMap` for the exception.
+  //  */
+  // def recoverWith[U >: T](
+  //     pf: PartialFunction[Throwable, Try[U]]
+  // ): Try[U] =
+  //   result match {
+  //     case Ok(_) => result
+  //     case Failure(exception) =>
+  //       try
+  //         if pf.isDefinedAt(exception)
+  //         then
+  //           val v = pf(exception)
+  //           if v.isInstanceOf[Failure[?]]
+  //           then v.asInstanceOf[Try[U]]
+  //           else Ok(v.asInstanceOf[U])
+  //         else result
+  //       catch case NonFatal(e) => Failure(e)
+  //   }
 
-  /**
-   * Applies the given function `f` if this is a `Failure`, otherwise returns
-   * this if this is a `Ok`. This is like map for the exception.
-   */
-  def recover[U >: T](pf: PartialFunction[Throwable, U]): Try[U] =
-    result match {
-      case Ok(_) => result
-      case Failure(exc) =>
-        val marker = Statics.pfMarker
-        try
-          if pf.isDefinedAt(exc)
-          then Ok(pf(exc))
-          else result
-        catch case NonFatal(e) => Failure(e)
-    }
+  // /**
+  //  * Applies the given function `f` if this is a `Failure`, otherwise returns
+  //  * this if this is a `Ok`. This is like map for the exception.
+  //  */
+  // def recover[U >: T](pf: PartialFunction[Throwable, U]): Try[U] =
+  //   result match {
+  //     case Ok(_) => result
+  //     case Failure(exc) =>
+  //       try
+  //         if pf.isDefinedAt(exc)
+  //         then Ok(pf(exc))
+  //         else result
+  //       catch case NonFatal(e) => Failure(e)
+  //   }
 
 }
 
